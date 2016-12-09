@@ -1,7 +1,6 @@
 package com.softwaremill.akka.stream.throttle
 
-import java.util.concurrent.TimeUnit
-
+import com.softwaremill.akka.stream.throttle.ThrottleSettings._
 import org.scalatest.{FlatSpec, Matchers}
 
 import scala.concurrent.duration._
@@ -9,11 +8,14 @@ import scala.concurrent.duration._
 class ThrottleSettingsSpec extends FlatSpec with Matchers {
 
   it should "return correct minimum interval between events" in {
-    assertInterval(ThrottleSettings(2, TimeUnit.SECONDS), 500.millis)
-    assertInterval(ThrottleSettings(20, TimeUnit.SECONDS), 50.millis)
-    assertInterval(ThrottleSettings(200, TimeUnit.SECONDS), 5.millis)
-    assertInterval(ThrottleSettings(120, TimeUnit.MINUTES), 500.millis)
-    assertInterval(ThrottleSettings(1000, TimeUnit.SECONDS), 1.millis)
+    assertInterval(2.perSecond, 500.millis)
+    assertInterval(20.perSecond, 50.millis)
+    assertInterval(200.per(1.second), 5.millis)
+    assertInterval(120.per(60.seconds), 500.millis)
+    assertInterval(120.per(1.minute), 500.millis)
+    assertInterval(120.per(1.minute), 500.millis)
+    assertInterval(1000.perSecond, 1.millis)
+    assertInterval(1000.perSecond, 1.millis)
   }
 
   private def assertInterval(ts: ThrottleSettings, expectedInterval: FiniteDuration): Unit = {

@@ -1,23 +1,24 @@
 package com.softwaremill.akka.stream.throttle
 
+import akka.NotUsed
 import akka.actor.Cancellable
-import akka.stream.Attributes
 import akka.stream.scaladsl._
+import akka.stream.{Attributes, FlowShape, Graph}
 
 import scala.concurrent.duration._
 
 object Throttle {
 
-  import FlowGraph.Implicits._
+  import GraphDSL.Implicits._
 
   private val AkkaSchedulerInterval = 10.millis
 
-  def create[T](throttleSettings: ThrottleSettings): Flow[T, (T, Unit), Unit]#Repr[T, Unit] =
-    Flow() { implicit builder =>
-      val zip = builder.add(Zip[T, Unit]())
+  def create[T](throttleSettings: ThrottleSettings): Graph[FlowShape[T, T], NotUsed] =
+    GraphDSL.create() { implicit builder =>
+      val zip = builder.add(ZipWith[T, Unit, T]((i1, i2) => i1))
       ticksSource(throttleSettings) ~> zip.in1
-      (zip.in0, zip.out)
-    }.map(_._1).withAttributes(Attributes.inputBuffer(initial = 1, max = 1)).named("throttle")
+      FlowShape(zip.in0, zip.out)
+    }.withAttributes(Attributes.inputBuffer(initial = 1, max = 1)).named("throttle")
 
   private def ticksSource(throttleSettings: ThrottleSettings): Source[Unit, Cancellable] =
   // Akka scheduler is lightweight but has limited frequency (up to 1ms). By default it's 10ms,
@@ -27,10 +28,10 @@ object Throttle {
   // to send 1 tick / 5ms).
     if (throttleSettings.interval < AkkaSchedulerInterval) {
       val factor: Int = (10.millis.toNanos / throttleSettings.interval.toNanos).toInt
-      val tickSource = Source(Duration.Zero, throttleSettings.interval * factor, ())
+      val tickSource = Source.tick(Duration.Zero, throttleSettings.interval * factor, ())
       tickSource.mapConcat(_ => List.fill(factor)(()))
     } else {
-      Source(Duration.Zero, throttleSettings.interval, ())
+      Source.tick(Duration.Zero, throttleSettings.interval, ())
     }
 
 }

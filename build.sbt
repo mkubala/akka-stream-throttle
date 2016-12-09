@@ -4,10 +4,13 @@ organization := "com.softwaremill"
 
 version := "1.0-SNAPSHOT"
 
-scalaVersion := "2.11.7"
+scalaVersion := "2.11.8"
 
-libraryDependencies ++= Seq(
-  "com.typesafe.akka" %% "akka-stream-experimental" % "1.0-RC4",
-  "com.typesafe.akka" %% "akka-stream-testkit-experimental" % "1.0-RC4",
-  "org.scalatest" %% "scalatest" % "2.2.4"
-)
+libraryDependencies ++= {
+  val akkaV = "2.4.14"
+  Seq(
+    "com.typesafe.akka"   %% "akka-stream"          % akkaV,
+    "com.typesafe.akka"   %% "akka-stream-testkit"  % akkaV,
+    "org.scalatest"       %% "scalatest"            % "3.0.1" % "test"
+  )
+}
