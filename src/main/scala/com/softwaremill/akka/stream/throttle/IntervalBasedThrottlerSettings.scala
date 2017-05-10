@@ -2,7 +2,7 @@ package com.softwaremill.akka.stream.throttle
 
 import scala.concurrent.duration._
 
-case class ThrottleSettings(numberOfOps: Int, duration: FiniteDuration) {
+case class IntervalBasedThrottlerSettings(numberOfOps: Int, duration: FiniteDuration) {
   lazy val interval: FiniteDuration = {
     val oneUnitInNanos: Long = duration.toNanos
     val intervalInNanos = oneUnitInNanos / numberOfOps
@@ -10,11 +10,11 @@ case class ThrottleSettings(numberOfOps: Int, duration: FiniteDuration) {
   }
 }
 
-object ThrottleSettings {
+object IntervalBasedThrottlerSettings {
 
   implicit class ThrottleSettingsBuilder(val numberOfOps: Int) extends AnyVal {
-    def per(duration: FiniteDuration): ThrottleSettings = ThrottleSettings(numberOfOps, duration)
-    def perSecond: ThrottleSettings = per(1.second)
+    def per(duration: FiniteDuration): IntervalBasedThrottlerSettings = IntervalBasedThrottlerSettings(numberOfOps, duration)
+    def perSecond: IntervalBasedThrottlerSettings = per(1.second)
   }
 
 }

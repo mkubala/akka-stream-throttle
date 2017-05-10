@@ -1,11 +1,11 @@
 package com.softwaremill.akka.stream.throttle
 
-import com.softwaremill.akka.stream.throttle.ThrottleSettings._
+import com.softwaremill.akka.stream.throttle.IntervalBasedThrottlerSettings._
 import org.scalatest.{FlatSpec, Matchers}
 
 import scala.concurrent.duration._
 
-class ThrottleSettingsSpec extends FlatSpec with Matchers {
+class IntervalBasedThrottlerSettingsSpec extends FlatSpec with Matchers {
 
   it should "return correct minimum interval between events" in {
     assertInterval(2.perSecond, 500.millis)
@@ -18,7 +18,7 @@ class ThrottleSettingsSpec extends FlatSpec with Matchers {
     assertInterval(1000.perSecond, 1.millis)
   }
 
-  private def assertInterval(ts: ThrottleSettings, expectedInterval: FiniteDuration): Unit = {
+  private def assertInterval(ts: IntervalBasedThrottlerSettings, expectedInterval: FiniteDuration): Unit = {
     ts.interval.compare(expectedInterval) shouldBe 0
   }
 

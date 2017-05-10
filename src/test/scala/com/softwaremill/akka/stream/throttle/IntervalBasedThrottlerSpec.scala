@@ -5,13 +5,13 @@ import akka.stream.scaladsl.Source
 import akka.stream.testkit.TestSubscriber
 import akka.stream.testkit.scaladsl.TestSink
 import akka.stream.{ActorMaterializer, Materializer}
-import com.softwaremill.akka.stream.throttle.ThrottleSettings._
+import com.softwaremill.akka.stream.throttle.IntervalBasedThrottlerSettings._
 import org.scalatest.{FlatSpec, Matchers, ParallelTestExecution}
 
 import scala.concurrent.Await
 import scala.concurrent.duration._
 
-class ThrottleSpec extends FlatSpec with ParallelTestExecution with Matchers with ThrottleTestKit with StreamTestingSandbox {
+class IntervalBasedThrottlerSpec extends FlatSpec with ParallelTestExecution with Matchers with IntervalBasedThrottlerTestKit with StreamTestingSandbox {
 
   val TimeTolerance: FiniteDuration = 35.millis
   val systemName = "ThrottleSpec-system"
@@ -19,7 +19,7 @@ class ThrottleSpec extends FlatSpec with ParallelTestExecution with Matchers wit
   it should "limit rate of messages - low frequency" in sandbox { deps =>
     import deps._
 
-    val throttle = Throttle.create[Int](2.perSecond)
+    val throttle = IntervalBasedThrottler.create[Int](2.perSecond)
     val numberOfElements = 6
 
     val flow = Source(1 to numberOfElements * 2).via(throttle).runWith(TestSink.probe[Int])
@@ -32,7 +32,7 @@ class ThrottleSpec extends FlatSpec with ParallelTestExecution with Matchers wit
   it should "limit rate of messages - medium frequency" in sandbox { deps =>
     import deps._
 
-    val throttle = Throttle.create[Int](100.perSecond)
+    val throttle = IntervalBasedThrottler.create[Int](100.perSecond)
 
     val flow = Source(1 to 400).via(throttle).runWith(TestSink.probe[Int])
 
@@ -44,7 +44,7 @@ class ThrottleSpec extends FlatSpec with ParallelTestExecution with Matchers wit
   it should "limit rate of messages - high frequency" in sandbox { deps =>
     import deps._
 
-    val throttle = Throttle.create[Int](2000.perSecond) // max 2000 messages per second
+    val throttle = IntervalBasedThrottler.create[Int](2000.perSecond) // max 2000 messages per second
 
     val flow = Source(1 to 7000).via(throttle).runWith(TestSink.probe[Int])
 
@@ -56,7 +56,7 @@ class ThrottleSpec extends FlatSpec with ParallelTestExecution with Matchers wit
   it should "keep limits with slow producer" in sandbox { deps =>
     import deps._
 
-    val throttle = Throttle.create[Int](1000.perSecond) // max 1000 messages per second
+    val throttle = IntervalBasedThrottler.create[Int](1000.perSecond) // max 1000 messages per second
 
     val flow = Source.tick(Duration.Zero, 1.second, 0).via(throttle).runWith(TestSink.probe[Int])
 
@@ -67,7 +67,7 @@ class ThrottleSpec extends FlatSpec with ParallelTestExecution with Matchers wit
 
 }
 
-trait ThrottleTestKit {
+trait IntervalBasedThrottlerTestKit {
 
   implicit object FiniteDurationIsNumeric extends Numeric[FiniteDuration] {
     override def plus(x: FiniteDuration, y: FiniteDuration): FiniteDuration = x + y
