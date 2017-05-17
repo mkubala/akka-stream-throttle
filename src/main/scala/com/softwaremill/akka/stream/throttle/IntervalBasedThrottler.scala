@@ -1,37 +1,54 @@
 package com.softwaremill.akka.stream.throttle
 
 import akka.NotUsed
-import akka.actor.Cancellable
+import akka.stream._
 import akka.stream.scaladsl._
-import akka.stream.{Attributes, FlowShape, Graph}
 
+import scala.annotation.tailrec
 import scala.concurrent.duration._
+import scala.math.BigDecimal.RoundingMode
 
 object IntervalBasedThrottler {
 
-  import GraphDSL.Implicits._
+  val TickTime: FiniteDuration = 100.millis
 
-  private val AkkaSchedulerInterval = 10.millis
+  def create[T](throttleSettings: IntervalBasedThrottlerSettings): Graph[FlowShape[T, Seq[T]], NotUsed] = {
 
-  def create[T](throttleSettings: IntervalBasedThrottlerSettings): Graph[FlowShape[T, T], NotUsed] =
+    import GraphDSL.Implicits._
+
+    val (batchSize, interval) = calculateBatchSizeAndInterval(throttleSettings)
+
     GraphDSL.create() { implicit builder =>
-      val zip = builder.add(ZipWith[T, Unit, T]((i1, i2) => i1))
-      ticksSource(throttleSettings) ~> zip.in1
-      FlowShape(zip.in0, zip.out)
-    }.withAttributes(Attributes.inputBuffer(initial = 1, max = 1)).named("throttle")
+      val ticksSource = builder.add(Source.tick(interval, interval, ()))
+//      val groupWithin = builder.add(Flow[T].groupedWithin(batchSize, interval))
+      val zip = builder.add(ZipWith[T, Unit, T]((in0, _) => in0))
 
-  private def ticksSource(throttleSettings: IntervalBasedThrottlerSettings): Source[Unit, Cancellable] = {
-    // Akka scheduler is lightweight but has limited frequency (up to 1ms). By default it's 10ms,
-    // which would allow us to pass max 100 msg/s. Thus in case of desirable throttle throughput
-    // greater than 100 msg/s we are passing more than one tick at a time (e.g. if you need to
-    // send 200 msg/s, then this tick source will emit 2 ticks in 10ms intervals, instead of trying
-    // to send 1 tick / 5ms).
-    if (throttleSettings.interval < AkkaSchedulerInterval) {
-      val factor: Int = (10.millis.toNanos / throttleSettings.interval.toNanos).toInt
-      val tickSource = Source.tick(Duration.Zero, throttleSettings.interval * factor, ())
-      tickSource.mapConcat(_ => List.fill(factor)(()))
+      ticksSource ~> zip.in1
+//      groupWithin ~> zip.in0
+
+//      FlowShape(groupWithin.in, zip.out)
+      FlowShape(zip.in0, zip.out.map(List(_)).outlet)
+//      FlowShape(groupWithin.in, groupWithin.out)
+    }
+  }
+
+  private def calculateBatchSizeAndInterval(throttleSettings: IntervalBasedThrottlerSettings): (Int, FiniteDuration) = {
+    val elements = throttleSettings.numberOfOps
+    val per = throttleSettings.duration
+
+    @tailrec
+    def findGcd(p: Int, q: Int): Int = {
+      if (q == 0) p
+      else findGcd(q, p % q)
+    }
+
+    val numOfTicks = (BigDecimal(per.toMillis) / TickTime.toMillis).setScale(0, RoundingMode.DOWN).toInt
+    val gcd = findGcd(numOfTicks max elements, numOfTicks min elements)
+
+    if (per / gcd >= TickTime) {
+      (elements / gcd, (per / gcd) + 1.milli)
     } else {
-      Source.tick(Duration.Zero, throttleSettings.interval, ())
+      (elements, per)
     }
   }
 
