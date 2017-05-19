@@ -13,6 +13,7 @@ import org.scalatest.{FlatSpec, Matchers, ParallelTestExecution}
 import scala.annotation.tailrec
 import scala.concurrent.Await
 import scala.concurrent.duration._
+import scala.util.Random
 
 class IntervalBasedThrottlerSpec extends FlatSpec /*with ParallelTestExecution*/ with Matchers
   with IntervalBasedThrottlerTestKit with StreamTestingSandbox {
@@ -91,6 +92,25 @@ class IntervalBasedThrottlerSpec extends FlatSpec /*with ParallelTestExecution*/
   //    flow.cancel()
   //  }
 
+  // ----
+
+    it should "limit rate of messages - medium frequency" in sandbox { deps =>
+      import deps._
+
+      val throttle = IntervalBasedThrottler.create[Int](100.perSecond)
+
+      val flow = infiniteSourceWithRandomDelay(100.millis).via(throttle).runWith(TestSink.probe[Seq[Int]])
+
+      val (_, intervals) = timeOfProcessing(300, 1).elementsOf(flow)
+      val minInterval = intervals.min
+      minInterval should be >= 3.seconds
+      minInterval should be <= 3.5.seconds
+
+      flow.cancel()
+    }
+
+  // ----
+
   it should "keep limits with slow producer" in sandbox { deps =>
     import deps._
 
@@ -98,7 +118,7 @@ class IntervalBasedThrottlerSpec extends FlatSpec /*with ParallelTestExecution*/
 
     val flow = slowInfiniteSource(300.millis).via(throttle).runWith(TestSink.probe[Seq[Int]])
 
-    val (time, intervals) = timeOfProcessing(10, 1).elementsOf(flow)
+    val (time, intervals) = timeOfProcessing(11, 1).elementsOf(flow)
     time should be >= 2.7.seconds
     time should be <= 3.2.seconds
     intervals.foreach {
@@ -153,7 +173,7 @@ trait IntervalBasedThrottlerTestKit {
         @tailrec
         def collectTimestamps(acc: List[Long]): List[Long] = {
           val batch = flow.expectNext()
-          val t = System.nanoTime()
+          val t = System.currentTimeMillis()
           println(s"received batch: $batch")
           val newAcc = t :: acc
           println(s"${batch.last} =?= $lastExpectedElement == ${batch.last == lastExpectedElement}")
@@ -168,13 +188,13 @@ trait IntervalBasedThrottlerTestKit {
       }
 
       val intervals: List[FiniteDuration] = timestamps.sliding(2, 1).map {
-        case List(a, b) => (b - a).nanos
+        case List(a, b) => (b - a).millis
       }.toList
 
       println(s"Intervals: $intervals")
 
-      val startNanos = timestamps.head
-      val endNanos = timestamps.last
+      val startMillis = timestamps.head
+      val endMillis = timestamps.last
 
       //        expectedBatches.map { _ =>
       //        flow.expectN
@@ -193,9 +213,12 @@ trait IntervalBasedThrottlerTestKit {
       //      flow.expectNextN(expectedBatches.map(_.map(_ + initialOffset)))
       //      val endMillis = System.currentTimeMillis()
 
-      ((endNanos - startNanos).nanos, intervals)
+      ((endMillis - startMillis).millis, intervals)
     }
   }
+
+  protected def infiniteSourceWithRandomDelay(maxDelay: FiniteDuration): Source[Int, NotUsed] =
+    slowInfiniteSource((Random.nextLong() % maxDelay.toMillis).millis + 1.milli)
 
   protected def infiniteSource: Source[Int, NotUsed] = Source(Stream.from(1, 1))
 
