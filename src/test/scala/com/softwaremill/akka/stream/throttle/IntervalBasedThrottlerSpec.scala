@@ -1,17 +1,21 @@
 package com.softwaremill.akka.stream.throttle
 
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.util.concurrent.atomic.AtomicLong
+
 import akka.NotUsed
 import akka.actor.ActorSystem
-import akka.stream.scaladsl.Source
+import akka.stream.scaladsl.{Sink, Source}
 import akka.stream.testkit.TestSubscriber
-import akka.stream.testkit.TestSubscriber.OnNext
+import akka.stream.testkit.TestSubscriber.{OnComplete, OnNext}
 import akka.stream.testkit.scaladsl.TestSink
-import akka.stream.{ActorMaterializer, Materializer, ThrottleMode}
+import akka.stream._
 import com.softwaremill.akka.stream.throttle.IntervalBasedThrottlerSettings._
 import org.scalatest.{FlatSpec, Matchers, ParallelTestExecution}
 
 import scala.annotation.tailrec
-import scala.concurrent.Await
+import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import scala.util.Random
 
@@ -22,19 +26,19 @@ class IntervalBasedThrottlerSpec extends FlatSpec /*with ParallelTestExecution*/
 
   val systemName = "ThrottleSpec-system"
 
-  it should "limit rate of messages - low frequency" in sandbox { deps =>
-    import deps._
-
-    val throttle = IntervalBasedThrottler.create[Int](2.perSecond)
-
-    val flow = infiniteSource.via(throttle).runWith(TestSink.probe[Seq[Int]])
-
-    val (time, avgInterval) = timeOfProcessing(6, 1).elementsOf(flow)
-    time should be >= 2.5.seconds
-    time should be <= 3.seconds
-
-    flow.cancel()
-  }
+  //  it should "limit rate of messages - low frequency" in sandbox { deps =>
+  //    import deps._
+  //
+  //    val throttle = IntervalBasedThrottler.create[Int](2.perSecond)
+  //
+  //    val flow = infiniteSource.via(throttle).runWith(TestSink.probe[Seq[Int]])
+  //
+  //    val (time, avgInterval) = timeOfProcessing(6, 1).elementsOf(flow)
+  //    time should be >= 2.5.seconds
+  //    time should be <= 3.seconds
+  //
+  //    flow.cancel()
+  //  }
 
   //  it should "limit rate of messages - medium frequency" in sandbox { deps =>
   //    import deps._
@@ -64,68 +68,74 @@ class IntervalBasedThrottlerSpec extends FlatSpec /*with ParallelTestExecution*/
   //    flow.cancel()
   //  }
   //
-  //  it should "limit rate of messages - high frequency" in sandbox { deps =>
-  //    import deps._
-  //
-  //    val throttle = IntervalBasedThrottler.create[Int](2000.perSecond) // max 2000 messages per second
-  //
-  //    val flow = infiniteSource.via(throttle).runWith(TestSink.probe[Seq[Int]])
-  //
-  //    val (time, avgInterval) = timeOfProcessing(6000, 20).elementsOf(flow)
-  //    time should be >= 3.seconds
-  //    time should be <= 3.5.seconds
-  //
-  //    flow.cancel()
-  //  }
-  //
-  //  it should "limit rate of messages - extremely high frequency" in sandbox { deps =>
-  //    import deps._
-  //
-  //    val throttle = IntervalBasedThrottler.create[Int](50000.perSecond) // max 2000 messages per second
-  //
-  //    val flow = infiniteSource.via(throttle).runWith(TestSink.probe[Seq[Int]])
-  //
-  //    val (time, avgInterval) = timeOfProcessing(150000, 500).elementsOf(flow)
-  //    time should be >= 3.seconds
-  //    time should be <= 3.5.seconds
-  //
-  //    flow.cancel()
-  //  }
 
-  // ----
+  it should "limit rate of messages - high frequency" in sandbox { deps =>
+    import deps._
 
-    it should "limit rate of messages - medium frequency" in sandbox { deps =>
-      import deps._
+    val source = infiniteSource
+    val throttle = IntervalBasedThrottler.create[Int](2000.perSecond) // max 2000 messages per second
 
-      val throttle = IntervalBasedThrottler.create[Int](100.perSecond)
+    val flow = source.take(6000).via(throttle).runWith(TestSink.probe[Seq[Int]])
 
-      val flow = infiniteSourceWithRandomDelay(100.millis).via(throttle).runWith(TestSink.probe[Seq[Int]])
-
-      val (_, intervals) = timeOfProcessing(300, 1).elementsOf(flow)
-      val minInterval = intervals.min
-      minInterval should be >= 3.seconds
-      minInterval should be <= 3.5.seconds
-
-      flow.cancel()
+    val (time, intervals, batches) = drain(flow)
+    time should be >= (6000 / 20) * 10.millis
+    time should be <= (6000 / 20) * 40.millis * 1.3
+    intervals.foreach {
+      _ should be >= 10.millis
     }
+    batches.flatten should contain theSameElementsInOrderAs (1 to 6000).inclusive
+    batches.size shouldBe (6000 / 20)
+  }
 
-  // ----
+  it should "limit rate of messages - extremely high frequency" in sandbox { deps =>
+    import deps._
+
+    val source = infiniteSource
+    val throttle = IntervalBasedThrottler.create[Int](50000.perSecond) // max 2000 messages per second
+
+    val flow = source.take(150000).via(throttle).runWith(TestSink.probe[Seq[Int]])
+
+    val (time, intervals, batches) = drain(flow)
+    time should be >= 300 * 10.millis
+    time should be <= 300 * 40.millis * 1.3
+    intervals.foreach {
+      _ should be >= 10.millis
+    }
+    batches.flatten should contain theSameElementsInOrderAs (1 to 150000).inclusive
+    batches.size shouldBe 300
+  }
+
+  it should "limit rate of messages - medium frequency" in sandbox { deps =>
+    import deps._
+
+    val source = infiniteSource
+    val throttle = IntervalBasedThrottler.create[Int](100.millis, 10)
+    val flow = source.take(300).via(throttle).runWith(TestSink.probe[Seq[Int]])
+
+    val (time, intervals, batches) = drain(flow)
+    time should be >= 30 * 100.millis
+    time should be <= 30 * 100.millis * 1.3
+    intervals.foreach {
+      _ should be >= 100.millis
+    }
+    batches.flatten should contain theSameElementsInOrderAs (1 to 300).inclusive
+    batches.size shouldBe 30
+  }
 
   it should "keep limits with slow producer" in sandbox { deps =>
     import deps._
 
-    val throttle = IntervalBasedThrottler.create[Int](1000.perSecond) // max 1000 messages per second -> 10 msg / tick (= 10ms)
+    val source = slowInfiniteSource(300.millis)
+    val flow = source.take(10).via(IntervalBasedThrottler.create[Int](100.millis, 1)).runWith(TestSink.probe[Seq[Int]])
 
-    val flow = slowInfiniteSource(300.millis).via(throttle).runWith(TestSink.probe[Seq[Int]])
-
-    val (time, intervals) = timeOfProcessing(11, 1).elementsOf(flow)
-    time should be >= 2.7.seconds
-    time should be <= 3.2.seconds
+    val (time, intervals, batches) = drain(flow)
+    time should be >= 10 * 100.millis
+    time should be <= 3.5.seconds
     intervals.foreach {
-      _ should be >= 300.millis
+      _ should be >= 100.millis
     }
-
-    flow.cancel()
+    batches.flatten should contain theSameElementsInOrderAs (1 to 10).inclusive
+    batches.size shouldBe 10
   }
 
 }
@@ -154,67 +164,37 @@ trait IntervalBasedThrottlerTestKit {
     override def compare(x: FiniteDuration, y: FiniteDuration): Int = x compare y
   }
 
-  protected def timeOfProcessing(n: Int, batchSize: Int) = new {
+  type Batch = Seq[Int]
 
-    private val initialOffset = 3 * batchSize
-    private val defaultExpectedBatches: List[Seq[Int]] = (1 to n).inclusive.grouped(batchSize).toList
+  protected def drain(flow: TestSubscriber.Probe[Seq[Int]]): (FiniteDuration, List[FiniteDuration], List[Batch]) = {
+    val timestampsAndBatches = {
 
-    def elementsOf(flow: TestSubscriber.Probe[Seq[Int]],
-                   expectedBatches: List[Seq[Int]] = defaultExpectedBatches): (FiniteDuration, List[FiniteDuration]) = {
-      // ask for an element, to discard stream initialization & warm up time from our measurement
-      flow.request(initialOffset)
-      flow.expectNextN((1 to initialOffset).inclusive.grouped(batchSize).toList)
-
-      //      val startMillis = System.currentTimeMillis()
-      flow.request(n)
-      val timestamps = {
-        val lastExpectedElement = expectedBatches.last.last + initialOffset
-
-        @tailrec
-        def collectTimestamps(acc: List[Long]): List[Long] = {
-          val batch = flow.expectNext()
-          val t = System.currentTimeMillis()
-          println(s"received batch: $batch")
-          val newAcc = t :: acc
-          println(s"${batch.last} =?= $lastExpectedElement == ${batch.last == lastExpectedElement}")
-          if (batch.last == lastExpectedElement) {
-            newAcc.reverse
-          } else {
-            collectTimestamps(newAcc)
-          }
+      def collectTimestampsAndBatches(acc: List[(Long, Batch)]): List[(Long, Batch)] = {
+        flow.request(1)
+        flow.expectEventPF {
+          case OnNext(batch) if batch.isInstanceOf[Batch] =>
+            println(s"received batch: $batch")
+            val t: (Long, Batch) = (System.currentTimeMillis(), batch.asInstanceOf[Batch])
+            collectTimestampsAndBatches(t :: acc)
+          case OnComplete | _ =>
+            acc.reverse
         }
-
-        collectTimestamps(Nil)
       }
 
-      val intervals: List[FiniteDuration] = timestamps.sliding(2, 1).map {
-        case List(a, b) => (b - a).millis
-      }.toList
-
-      println(s"Intervals: $intervals")
-
-      val startMillis = timestamps.head
-      val endMillis = timestamps.last
-
-      //        expectedBatches.map { _ =>
-      //        flow.expectN
-      //        /*val arrivalTime = */flow.expectEventPF {
-      //          case OnNext(xs) if xs == expectedBatch => System.currentTimeMillis().millis
-      //        }
-      //        (avgInterval + arrivalTime) / 2
-      //      }.reduce((a, b) => (a + b) / 2)
-
-      //      () map { _ =>
-
-      //      }.reduceLeft { (acc, t) =>
-      //        (acc + t) / 2
-      //      }.millis
-
-      //      flow.expectNextN(expectedBatches.map(_.map(_ + initialOffset)))
-      //      val endMillis = System.currentTimeMillis()
-
-      ((endMillis - startMillis).millis, intervals)
+      collectTimestampsAndBatches(Nil)
     }
+
+    val (timestamps, batches) = timestampsAndBatches.unzip
+    val intervals: List[FiniteDuration] = timestamps.sliding(2, 1).map {
+      case List(a, b) => (b - a).millis
+    }.toList
+
+    println(s"Intervals: $intervals")
+
+    val startMillis = timestamps.head
+    val endMillis = timestamps.last
+
+    ((endMillis - startMillis).millis, intervals, batches)
   }
 
   protected def infiniteSourceWithRandomDelay(maxDelay: FiniteDuration): Source[Int, NotUsed] =
@@ -223,7 +203,10 @@ trait IntervalBasedThrottlerTestKit {
   protected def infiniteSource: Source[Int, NotUsed] = Source(Stream.from(1, 1))
 
   protected def slowInfiniteSource(pushDelay: FiniteDuration): Source[Int, NotUsed] =
-    infiniteSource.throttle(1, pushDelay, 1, ThrottleMode.shaping)
+    infiniteSource.throttle(1, pushDelay, 1, ThrottleMode.shaping).map { e =>
+      println(s"${DateTimeFormatter.ISO_LOCAL_TIME.format(LocalDateTime.now())} - source emits: $e")
+      e
+    }
 
 }
 
